@@ -9,6 +9,7 @@
 #include <QList>
 #include <QPointF>
 #include <QRegion>
+#include <QSize>
 #include <QTransform>
 #include <QVector>
 #include <QWidget>
@@ -44,6 +45,9 @@ public:
     void setPressureStrength(int value);
     void setDrawingStartedCallback(std::function<void()> callback);
 
+    void setCanvasSize(const QSize& size);
+    QSize getCanvasSize() const;
+
     void setOnionSkinEnabled(bool enabled);
     void setOnionSkinRange(int range);
 
@@ -54,6 +58,7 @@ public:
     void zoomIn();
     void zoomOut();
     void resetZoom();
+    void centerCanvas();
 
     void rotate90();
     void rotate180();
@@ -63,6 +68,10 @@ public:
     void deleteFrame(int index);
     void selectFrame(int index);
     void clearProject();
+
+    bool copyFrame(int index);
+    bool pasteFrameToCurrent();
+    bool hasCopiedFrame() const;
 
     int getFrameCount() const;
     int getSelectedFrameIndex() const;
@@ -95,6 +104,8 @@ private:
     ) const;
 
     QTransform canvasToWidgetTransform() const;
+
+    void fitCanvasInWidget();
 
     void updateViewOffsetKeepingPoint(
         const QPointF& widgetPoint,
@@ -169,6 +180,12 @@ private:
 private:
     QVector<AnimationFrame> frames;
     int selectedFrameIndex = 0;
+
+    AnimationFrame copiedFrame;
+    bool copiedFrameAvailable = false;
+
+    QSize canvasPixelSize = QSize(1280, 720);
+    bool viewInitialized = false;
 
     QImage canvasImage;
     Stroke currentStroke;

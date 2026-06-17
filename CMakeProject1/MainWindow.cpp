@@ -6,6 +6,9 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QColorDialog>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QFormLayout>
 #include <QDockWidget>
 #include <QFont>
 #include <QFrame>
@@ -20,6 +23,7 @@
 #include <QPushButton>
 #include <QShortcut>
 #include <QSignalBlocker>
+#include <QSize>
 #include <QSizePolicy>
 #include <QSlider>
 #include <QSpinBox>
@@ -27,8 +31,6 @@
 #include <QTimer>
 #include <QToolBar>
 #include <QVBoxLayout>
-#include <QFont>
-#include <QHBoxLayout>
 #include <QIcon>
 #include <QWidget>
 
@@ -48,6 +50,93 @@ namespace
     {
         fps = std::clamp(fps, 1, 60);
         return std::max(1, 1000 / fps);
+    }
+
+    QSize askStartupCanvasSize(QWidget* parent)
+    {
+        constexpr int DefaultWidth = 1280;
+        constexpr int DefaultHeight = 720;
+
+        QDialog dialog(parent);
+        dialog.setWindowTitle("New Canvas Size");
+        dialog.setModal(true);
+
+        QVBoxLayout* layout = new QVBoxLayout(&dialog);
+        layout->setContentsMargins(18, 18, 18, 18);
+        layout->setSpacing(12);
+
+        QLabel* titleLabel = new QLabel("Choose your canvas size");
+        QFont titleFont = titleLabel->font();
+        titleFont.setBold(true);
+        titleFont.setPointSize(12);
+        titleLabel->setFont(titleFont);
+
+        QLabel* hintLabel = new QLabel("This controls the actual drawing area for the project.");
+        hintLabel->setWordWrap(true);
+
+        QSpinBox* widthBox = new QSpinBox();
+        widthBox->setRange(100, 8192);
+        widthBox->setValue(DefaultWidth);
+        widthBox->setSuffix(" px");
+
+        QSpinBox* heightBox = new QSpinBox();
+        heightBox->setRange(100, 8192);
+        heightBox->setValue(DefaultHeight);
+        heightBox->setSuffix(" px");
+
+        QFormLayout* formLayout = new QFormLayout();
+        formLayout->setContentsMargins(0, 0, 0, 0);
+        formLayout->setSpacing(10);
+        formLayout->addRow("Width", widthBox);
+        formLayout->addRow("Height", heightBox);
+
+        QHBoxLayout* presetLayout = new QHBoxLayout();
+        presetLayout->setContentsMargins(0, 0, 0, 0);
+        presetLayout->setSpacing(8);
+
+        QPushButton* hdPresetButton = new QPushButton("1280 x 720");
+        QPushButton* fullHdPresetButton = new QPushButton("1920 x 1080");
+        QPushButton* squarePresetButton = new QPushButton("1080 x 1080");
+
+        presetLayout->addWidget(hdPresetButton);
+        presetLayout->addWidget(fullHdPresetButton);
+        presetLayout->addWidget(squarePresetButton);
+
+        QObject::connect(hdPresetButton, &QPushButton::clicked, &dialog, [widthBox, heightBox]() {
+            widthBox->setValue(1280);
+            heightBox->setValue(720);
+            });
+
+        QObject::connect(fullHdPresetButton, &QPushButton::clicked, &dialog, [widthBox, heightBox]() {
+            widthBox->setValue(1920);
+            heightBox->setValue(1080);
+            });
+
+        QObject::connect(squarePresetButton, &QPushButton::clicked, &dialog, [widthBox, heightBox]() {
+            widthBox->setValue(1080);
+            heightBox->setValue(1080);
+            });
+
+        QDialogButtonBox* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+        buttons->button(QDialogButtonBox::Ok)->setText("Create Canvas");
+        buttons->button(QDialogButtonBox::Cancel)->setText("Use Default");
+
+        QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+        QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+        layout->addWidget(titleLabel);
+        layout->addWidget(hintLabel);
+        layout->addLayout(formLayout);
+        layout->addWidget(new QLabel("Presets"));
+        layout->addLayout(presetLayout);
+        layout->addWidget(buttons);
+
+        if (dialog.exec() == QDialog::Accepted)
+        {
+            return QSize(widthBox->value(), heightBox->value());
+        }
+
+        return QSize(DefaultWidth, DefaultHeight);
     }
 
     QWidget* createFrameWidget(
@@ -214,7 +303,9 @@ MainWindow::MainWindow(QWidget* parent)
     setWindowTitle("Animation App - Neon Minimal");
     resize(1200, 760);
 
-    buildCentralCanvas();
+    const QSize canvasSize = askStartupCanvasSize(this);
+
+    buildCentralCanvas(canvasSize);
     buildShortcuts();
     buildMenus();
     buildTopToolbar();
@@ -222,10 +313,13 @@ MainWindow::MainWindow(QWidget* parent)
     buildTimelineDock();
     connectActions();
 
-    statusBar()->showMessage("Ready");
+    statusBar()->showMessage(
+        "Ready - Canvas " + QString::number(canvas->getCanvasSize().width()) +
+        " x " + QString::number(canvas->getCanvasSize().height())
+    );
 }
 
-void MainWindow::buildCentralCanvas()
+void MainWindow::buildCentralCanvas(const QSize& canvasSize)
 {
     QWidget* centerArea = new QWidget();
     centerArea->setObjectName("CenterArea");
@@ -244,6 +338,7 @@ void MainWindow::buildCentralCanvas()
 
     canvas = new CanvasWidget();
     canvas->setMinimumSize(720, 460);
+    canvas->setCanvasSize(canvasSize);
 
     canvasFrameLayout->addWidget(canvas);
     centerLayout->addWidget(canvasFrame);
@@ -256,7 +351,7 @@ void MainWindow::buildShortcuts()
     QShortcut* zoomInShortcut = new QShortcut(QKeySequence::ZoomIn, this);
     QShortcut* zoomInShortcutAlt = new QShortcut(QKeySequence("Ctrl+="), this);
     QShortcut* zoomOutShortcut = new QShortcut(QKeySequence::ZoomOut, this);
-    QShortcut* resetZoomShortcut = new QShortcut(QKeySequence("Ctrl+0"), this);
+    QShortcut* centerCanvasShortcut = new QShortcut(QKeySequence("Ctrl+0"), this);
 
     connect(zoomInShortcut, &QShortcut::activated, this, [this]() {
         canvas->zoomIn();
@@ -273,9 +368,9 @@ void MainWindow::buildShortcuts()
         updateZoomStatus();
         });
 
-    connect(resetZoomShortcut, &QShortcut::activated, this, [this]() {
-        canvas->resetZoom();
-        statusBar()->showMessage("Zoom reset to 100%");
+    connect(centerCanvasShortcut, &QShortcut::activated, this, [this]() {
+        canvas->centerCanvas();
+        statusBar()->showMessage("Canvas centered");
         });
 }
 
@@ -296,8 +391,20 @@ void MainWindow::buildMenus()
     redoMenuAction->setShortcut(QKeySequence("Ctrl+Y"));
     redoMenuAction->setShortcutContext(Qt::WindowShortcut);
 
+    editMenu->addSeparator();
+
+    copyFrameAction = editMenu->addAction("Copy Frame");
+    copyFrameAction->setShortcut(QKeySequence("Ctrl+C"));
+    copyFrameAction->setShortcutContext(Qt::WindowShortcut);
+
+    pasteFrameAction = editMenu->addAction("Paste Frame");
+    pasteFrameAction->setShortcut(QKeySequence("Ctrl+V"));
+    pasteFrameAction->setShortcutContext(Qt::WindowShortcut);
+
     addAction(undoMenuAction);
     addAction(redoMenuAction);
+    addAction(copyFrameAction);
+    addAction(pasteFrameAction);
 
     menuBar()->addMenu("View");
 }
@@ -310,6 +417,12 @@ void MainWindow::buildTopToolbar()
     undoAction = topToolbar->addAction("Undo");
     redoAction = topToolbar->addAction("Redo");
 
+    topToolbar->addSeparator();
+    topToolbar->addAction(copyFrameAction);
+    topToolbar->addAction(pasteFrameAction);
+
+    topToolbar->addSeparator();
+
     playAction = topToolbar->addAction("Play");
     playAction->setCheckable(true);
 
@@ -321,7 +434,7 @@ void MainWindow::buildTopToolbar()
 
     zoomInAction = topToolbar->addAction("Zoom +");
     zoomOutAction = topToolbar->addAction("Zoom -");
-    resetZoomAction = topToolbar->addAction("100%");
+    centerCanvasAction = topToolbar->addAction("Center");
 
     rotate90Action = topToolbar->addAction("Rot 90");
     rotate180Action = topToolbar->addAction("Rot 180");
@@ -349,7 +462,6 @@ void MainWindow::buildToolDock()
 
     brushButton = new QPushButton("BRUSH");
     eraserButton = new QPushButton("ERASER");
-    moveButton = new QPushButton("MOVE");
     onionSkinButton = new QPushButton("ONION SKIN: OFF");
     colorButton = new QPushButton("COLOUR");
     clearButton = new QPushButton("CLEAR CANVAS");
@@ -357,7 +469,6 @@ void MainWindow::buildToolDock()
 
     brushButton->setCheckable(true);
     eraserButton->setCheckable(true);
-    moveButton->setCheckable(true);
     onionSkinButton->setCheckable(true);
 
     brushButton->setChecked(true);
@@ -382,7 +493,6 @@ void MainWindow::buildToolDock()
 
     toolLayout->addWidget(brushButton);
     toolLayout->addWidget(eraserButton);
-    toolLayout->addWidget(moveButton);
     toolLayout->addWidget(onionSkinButton);
     toolLayout->addWidget(colorButton);
     toolLayout->addSpacing(8);
@@ -666,9 +776,9 @@ void MainWindow::connectActions()
         updateZoomStatus();
         });
 
-    connect(resetZoomAction, &QAction::triggered, this, [this]() {
-        canvas->resetZoom();
-        statusBar()->showMessage("Zoom reset to 100%");
+    connect(centerCanvasAction, &QAction::triggered, this, [this]() {
+        canvas->centerCanvas();
+        statusBar()->showMessage("Canvas centered");
         });
 
     connect(rotate90Action, &QAction::triggered, this, [this]() {
@@ -698,12 +808,6 @@ void MainWindow::connectActions()
         statusBar()->showMessage("Eraser tool selected");
         });
 
-    connect(moveButton, &QPushButton::clicked, this, [this]() {
-        setActiveTool(moveButton);
-        canvas->setEraserMode(false);
-        statusBar()->showMessage("Move tool will be added later");
-        });
-
     connect(onionSkinButton, &QPushButton::toggled, this, [this](bool checked) {
         canvas->setOnionSkinEnabled(checked);
 
@@ -728,6 +832,41 @@ void MainWindow::connectActions()
             canvas->setEraserMode(false);
             setActiveTool(brushButton);
             statusBar()->showMessage("Brush colour changed");
+        }
+        });
+
+    connect(copyFrameAction, &QAction::triggered, this, [this]() {
+        const int frameIndex = canvas->getSelectedFrameIndex();
+
+        if (canvas->copyFrame(frameIndex))
+        {
+            statusBar()->showMessage("Frame " + QString::number(frameIndex + 1) + " copied");
+        }
+        else
+        {
+            statusBar()->showMessage("Could not copy frame");
+        }
+        });
+
+    connect(pasteFrameAction, &QAction::triggered, this, [this]() {
+        const int frameIndex = canvas->getSelectedFrameIndex();
+
+        if (!canvas->hasCopiedFrame())
+        {
+            statusBar()->showMessage("Copy a frame before pasting");
+            return;
+        }
+
+        if (canvas->pasteFrameToCurrent())
+        {
+            rebuildTimelineItems(timelineList, canvas, this);
+            timelineList->setCurrentRow(frameIndex);
+
+            statusBar()->showMessage("Copied drawing pasted into Frame " + QString::number(frameIndex + 1));
+        }
+        else
+        {
+            statusBar()->showMessage("Could not paste frame");
         }
         });
 
@@ -802,7 +941,6 @@ void MainWindow::setActiveTool(QPushButton* activeButton)
 {
     brushButton->setChecked(activeButton == brushButton);
     eraserButton->setChecked(activeButton == eraserButton);
-    moveButton->setChecked(activeButton == moveButton);
 }
 
 void MainWindow::updateZoomStatus()

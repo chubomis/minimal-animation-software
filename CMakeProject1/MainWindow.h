@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QMainWindow>
+#include <QSize>
 
 class CanvasWidget;
 class QAction;
@@ -15,7 +16,7 @@ public:
     explicit MainWindow(QWidget* parent = nullptr);
 
 private:
-    void buildCentralCanvas();
+    void buildCentralCanvas(const QSize& canvasSize);
     void buildShortcuts();
     void buildMenus();
     void buildTopToolbar();
@@ -38,11 +39,13 @@ private:
     QAction* undoAction = nullptr;
     QAction* redoAction = nullptr;
     QAction* playAction = nullptr;
+    QAction* copyFrameAction = nullptr;
+    QAction* pasteFrameAction = nullptr;
 
     QAction* timelineAction = nullptr;
     QAction* zoomInAction = nullptr;
     QAction* zoomOutAction = nullptr;
-    QAction* resetZoomAction = nullptr;
+    QAction* centerCanvasAction = nullptr;
     QAction* rotate90Action = nullptr;
     QAction* rotate180Action = nullptr;
     QAction* resetRotationAction = nullptr;
@@ -52,7 +55,6 @@ private:
 
     QPushButton* brushButton = nullptr;
     QPushButton* eraserButton = nullptr;
-    QPushButton* moveButton = nullptr;
     QPushButton* onionSkinButton = nullptr;
     QPushButton* colorButton = nullptr;
     QPushButton* clearButton = nullptr;

@@ -16,6 +16,7 @@
 #include <QPen>
 #include <QRectF>
 #include <QSizeF>
+#include <QSize>
 #include <QSizePolicy>
 
 #include <algorithm>
@@ -71,6 +72,40 @@ void CanvasWidget::setPressureStrength(int value)
 void CanvasWidget::setDrawingStartedCallback(std::function<void()> callback)
 {
     drawingStartedCallback = std::move(callback);
+}
+
+void CanvasWidget::setCanvasSize(const QSize& size)
+{
+    QSize clampedSize(
+        std::clamp(size.width(), 100, 8192),
+        std::clamp(size.height(), 100, 8192)
+    );
+
+    if (canvasPixelSize == clampedSize)
+        return;
+
+    if (drawing)
+    {
+        finishStroke();
+    }
+
+    canvasPixelSize = clampedSize;
+    canvasImage = QImage();
+    viewInitialized = false;
+
+    if (width() > 0 && height() > 0)
+    {
+        fitCanvasInWidget();
+        viewInitialized = true;
+    }
+
+    rebuildCanvas();
+    update();
+}
+
+QSize CanvasWidget::getCanvasSize() const
+{
+    return canvasPixelSize;
 }
 
 void CanvasWidget::setOnionSkinEnabled(bool enabled)
@@ -132,6 +167,25 @@ void CanvasWidget::resetZoom()
 
     viewScale = 1.0;
     updateViewOffsetKeepingPoint(anchor, canvasPoint);
+
+    update();
+}
+
+void CanvasWidget::centerCanvas()
+{
+    if (width() <= 0 || height() <= 0)
+        return;
+
+    const QPointF widgetCenter(width() / 2.0, height() / 2.0);
+
+    const QPointF mappedCanvasCenter =
+        canvasToWidgetTransformWith(
+            viewScale,
+            viewRotationDegrees,
+            QPointF(0.0, 0.0)
+        ).map(canvasCenter());
+
+    viewOffset = widgetCenter - mappedCanvasCenter;
 
     update();
 }
@@ -258,6 +312,53 @@ void CanvasWidget::clearProject()
     update();
 }
 
+bool CanvasWidget::copyFrame(int index)
+{
+    if (index < 0 || index >= frames.size())
+        return false;
+
+    if (drawing)
+    {
+        finishStroke();
+    }
+
+    copiedFrame = frames[index];
+    copiedFrame.redoStack.clear();
+    copiedFrameAvailable = true;
+
+    return true;
+}
+
+bool CanvasWidget::pasteFrameToCurrent()
+{
+    if (!copiedFrameAvailable)
+        return false;
+
+    if (selectedFrameIndex < 0 || selectedFrameIndex >= frames.size())
+        return false;
+
+    if (drawing)
+    {
+        finishStroke();
+    }
+
+    frames[selectedFrameIndex] = copiedFrame;
+    frames[selectedFrameIndex].redoStack.clear();
+
+    currentStroke.points.clear();
+    drawing = false;
+
+    rebuildCanvas();
+    update();
+
+    return true;
+}
+
+bool CanvasWidget::hasCopiedFrame() const
+{
+    return copiedFrameAvailable;
+}
+
 int CanvasWidget::getFrameCount() const
 {
     return static_cast<int>(frames.size());
@@ -328,7 +429,15 @@ bool CanvasWidget::event(QEvent* event)
 void CanvasWidget::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);
+
+    if (!viewInitialized)
+    {
+        fitCanvasInWidget();
+        viewInitialized = true;
+    }
+
     rebuildCanvas();
+    update();
 }
 
 void CanvasWidget::paintEvent(QPaintEvent*)
@@ -462,18 +571,12 @@ void CanvasWidget::tabletEvent(QTabletEvent* event)
 
 QPointF CanvasWidget::canvasCenter() const
 {
-    if (canvasImage.isNull())
-        return QPointF(width() / 2.0, height() / 2.0);
-
-    return QPointF(canvasImage.width() / 2.0, canvasImage.height() / 2.0);
+    return QPointF(canvasPixelSize.width() / 2.0, canvasPixelSize.height() / 2.0);
 }
 
 QRectF CanvasWidget::canvasRect() const
 {
-    if (canvasImage.isNull())
-        return QRectF(QPointF(0, 0), QSizeF(size()));
-
-    return QRectF(QPointF(0, 0), QSizeF(canvasImage.size()));
+    return QRectF(QPointF(0, 0), QSizeF(canvasPixelSize));
 }
 
 QTransform CanvasWidget::canvasToWidgetTransformWith(
@@ -497,6 +600,26 @@ QTransform CanvasWidget::canvasToWidgetTransformWith(
 QTransform CanvasWidget::canvasToWidgetTransform() const
 {
     return canvasToWidgetTransformWith(viewScale, viewRotationDegrees, viewOffset);
+}
+
+void CanvasWidget::fitCanvasInWidget()
+{
+    if (canvasPixelSize.width() <= 0 || canvasPixelSize.height() <= 0)
+        return;
+
+    if (width() <= 0 || height() <= 0)
+        return;
+
+    const qreal scaleX = static_cast<qreal>(width()) / canvasPixelSize.width();
+    const qreal scaleY = static_cast<qreal>(height()) / canvasPixelSize.height();
+
+    viewScale = std::clamp(std::min(scaleX, scaleY) * 0.92, 0.10, 1.0);
+
+    const QPointF widgetCenter(width() / 2.0, height() / 2.0);
+    const QPointF mappedCanvasCenter =
+        canvasToWidgetTransformWith(viewScale, viewRotationDegrees, QPointF(0.0, 0.0)).map(canvasCenter());
+
+    viewOffset = widgetCenter - mappedCanvasCenter;
 }
 
 void CanvasWidget::updateViewOffsetKeepingPoint(
@@ -875,10 +998,10 @@ void CanvasWidget::ensureCanvas()
 
 void CanvasWidget::rebuildCanvas()
 {
-    if (width() <= 0 || height() <= 0)
+    if (canvasPixelSize.width() <= 0 || canvasPixelSize.height() <= 0)
         return;
 
-    canvasImage = QImage(size(), QImage::Format_ARGB32_Premultiplied);
+    canvasImage = QImage(canvasPixelSize, QImage::Format_ARGB32_Premultiplied);
     canvasImage.fill(QColor("#FAFAFA"));
 
     QPainter painter(&canvasImage);

@@ -73,6 +73,33 @@ void CanvasWidget::setDrawingStartedCallback(std::function<void()> callback)
     drawingStartedCallback = std::move(callback);
 }
 
+void CanvasWidget::setOnionSkinEnabled(bool enabled)
+{
+    if (onionSkinEnabled == enabled)
+        return;
+
+    onionSkinEnabled = enabled;
+
+    rebuildCanvas();
+    update();
+}
+
+void CanvasWidget::setOnionSkinRange(int range)
+{
+    int clampedRange = std::clamp(range, 1, 2);
+
+    if (onionSkinRange == clampedRange)
+        return;
+
+    onionSkinRange = clampedRange;
+
+    if (onionSkinEnabled)
+    {
+        rebuildCanvas();
+        update();
+    }
+}
+
 qreal CanvasWidget::getLastPressure() const
 {
     return lastPressure;
@@ -154,6 +181,42 @@ void CanvasWidget::addFrame()
 
     frames.push_back(AnimationFrame{});
     selectedFrameIndex = static_cast<int>(frames.size()) - 1;
+
+    currentStroke.points.clear();
+    drawing = false;
+
+    rebuildCanvas();
+    update();
+}
+
+void CanvasWidget::deleteFrame(int index)
+{
+    if (frames.size() <= 1)
+        return;
+
+    if (index < 0 || index >= frames.size())
+        return;
+
+    if (drawing)
+    {
+        finishStroke();
+    }
+
+    frames.removeAt(index);
+
+    if (selectedFrameIndex > index)
+    {
+        selectedFrameIndex--;
+    }
+    else if (selectedFrameIndex == index)
+    {
+        selectedFrameIndex = std::min(index, static_cast<int>(frames.size()) - 1);
+    }
+
+    if (selectedFrameIndex < 0)
+    {
+        selectedFrameIndex = 0;
+    }
 
     currentStroke.points.clear();
     drawing = false;
@@ -821,6 +884,11 @@ void CanvasWidget::rebuildCanvas()
     QPainter painter(&canvasImage);
     painter.setRenderHint(QPainter::Antialiasing, true);
 
+    if (onionSkinEnabled)
+    {
+        drawOnionSkinFrames(painter);
+    }
+
     for (const Stroke& stroke : currentFrame().strokes)
     {
         drawFullStroke(painter, stroke);
@@ -830,6 +898,67 @@ void CanvasWidget::rebuildCanvas()
     {
         drawFullStroke(painter, currentStroke);
     }
+}
+
+void CanvasWidget::drawOnionSkinFrames(QPainter& painter)
+{
+    if (frames.size() <= 1)
+        return;
+
+    const int range = std::clamp(onionSkinRange, 1, 2);
+
+    const QColor previousFrameRed("#EF4444");
+    const QColor nextFrameGreen("#22C55E");
+
+    for (int distance = range; distance >= 1; --distance)
+    {
+        const int previousIndex = selectedFrameIndex - distance;
+
+        if (previousIndex >= 0 && previousIndex < frames.size())
+        {
+            qreal opacity = distance == 1 ? 0.28 : 0.14;
+
+            for (const Stroke& stroke : frames[previousIndex].strokes)
+            {
+                drawFullStrokeTinted(painter, stroke, previousFrameRed, opacity);
+            }
+        }
+    }
+
+    for (int distance = range; distance >= 1; --distance)
+    {
+        const int nextIndex = selectedFrameIndex + distance;
+
+        if (nextIndex >= 0 && nextIndex < frames.size())
+        {
+            qreal opacity = distance == 1 ? 0.24 : 0.12;
+
+            for (const Stroke& stroke : frames[nextIndex].strokes)
+            {
+                drawFullStrokeTinted(painter, stroke, nextFrameGreen, opacity);
+            }
+        }
+    }
+}
+
+void CanvasWidget::drawFullStrokeTinted(
+    QPainter& painter,
+    const Stroke& stroke,
+    const QColor& tintColor,
+    qreal opacity
+)
+{
+    if (stroke.eraser)
+        return;
+
+    Stroke tintedStroke = stroke;
+    tintedStroke.color = tintColor;
+    tintedStroke.eraser = false;
+
+    painter.save();
+    painter.setOpacity(std::clamp(opacity, 0.0, 1.0));
+    drawFullStroke(painter, tintedStroke);
+    painter.restore();
 }
 
 qreal CanvasWidget::applyPressureCurve(qreal pressure) const

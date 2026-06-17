@@ -7,7 +7,9 @@
 #include <QCheckBox>
 #include <QColorDialog>
 #include <QDockWidget>
+#include <QFont>
 #include <QFrame>
+#include <QHBoxLayout>
 #include <QKeySequence>
 #include <QLabel>
 #include <QListView>
@@ -17,6 +19,7 @@
 #include <QMenuBar>
 #include <QPushButton>
 #include <QShortcut>
+#include <QSignalBlocker>
 #include <QSizePolicy>
 #include <QSlider>
 #include <QSpinBox>
@@ -24,6 +27,186 @@
 #include <QTimer>
 #include <QToolBar>
 #include <QVBoxLayout>
+#include <QFont>
+#include <QHBoxLayout>
+#include <QIcon>
+#include <QWidget>
+
+#include <algorithm>
+
+namespace
+{
+    constexpr int ItemTypeRole = Qt::UserRole;
+    constexpr int FrameIndexRole = Qt::UserRole + 1;
+
+    constexpr int TimelineCardWidth = 170;
+    constexpr int TimelineCardHeight = 110;
+
+    void rebuildTimelineItems(QListWidget* timelineList, CanvasWidget* canvas, MainWindow* window);
+
+    int playbackIntervalFromFps(int fps)
+    {
+        fps = std::clamp(fps, 1, 60);
+        return std::max(1, 1000 / fps);
+    }
+
+    QWidget* createFrameWidget(
+        QListWidget* timelineList,
+        CanvasWidget* canvas,
+        MainWindow* window,
+        int frameIndex
+    )
+    {
+        QWidget* outerWidget = new QWidget();
+        outerWidget->setObjectName("TimelineItemOuter");
+        outerWidget->setFixedSize(TimelineCardWidth - 12, TimelineCardHeight - 12);
+
+        QVBoxLayout* outerLayout = new QVBoxLayout(outerWidget);
+        outerLayout->setContentsMargins(6, 6, 6, 6);
+        outerLayout->setSpacing(0);
+
+        QFrame* card = new QFrame();
+        card->setObjectName("TimelineFrameCard");
+        card->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+
+        QVBoxLayout* cardLayout = new QVBoxLayout(card);
+        cardLayout->setContentsMargins(10, 8, 10, 10);
+        cardLayout->setSpacing(6);
+
+        QHBoxLayout* topRow = new QHBoxLayout();
+        topRow->setContentsMargins(0, 0, 0, 0);
+        topRow->setSpacing(0);
+
+        QPushButton* deleteButton = new QPushButton("X");
+        deleteButton->setObjectName("TimelineDeleteButton");
+
+        // This forces it to be text only, not a garbage icon.
+        deleteButton->setIcon(QIcon());
+        deleteButton->setText("X");
+
+        deleteButton->setFixedSize(24, 24);
+        deleteButton->setToolTip("Delete this frame");
+        deleteButton->setCursor(Qt::PointingHandCursor);
+        deleteButton->setFocusPolicy(Qt::NoFocus);
+
+        QFont deleteFont = deleteButton->font();
+        deleteFont.setBold(true);
+        deleteFont.setPointSize(10);
+        deleteButton->setFont(deleteFont);
+
+        topRow->addStretch();
+        topRow->addWidget(deleteButton, 0, Qt::AlignTop | Qt::AlignRight);
+
+        QPushButton* selectFrameButton = new QPushButton("Frame " + QString::number(frameIndex + 1));
+        selectFrameButton->setObjectName("TimelineFrameSelectButton");
+        selectFrameButton->setCursor(Qt::PointingHandCursor);
+        selectFrameButton->setFocusPolicy(Qt::NoFocus);
+        selectFrameButton->setMinimumHeight(42);
+
+        cardLayout->addLayout(topRow);
+        cardLayout->addStretch();
+        cardLayout->addWidget(selectFrameButton);
+        cardLayout->addStretch();
+
+        outerLayout->addWidget(card);
+
+        QObject::connect(selectFrameButton, &QPushButton::clicked, window, [timelineList, canvas, window, frameIndex]() {
+            canvas->selectFrame(frameIndex);
+            timelineList->setCurrentRow(frameIndex);
+
+            window->statusBar()->showMessage(
+                "Frame " + QString::number(frameIndex + 1) + " selected"
+            );
+            });
+
+        QObject::connect(deleteButton, &QPushButton::clicked, window, [timelineList, canvas, window, frameIndex]() {
+            if (canvas->getFrameCount() <= 1)
+            {
+                window->statusBar()->showMessage("You must keep at least one frame");
+                return;
+            }
+
+            canvas->deleteFrame(frameIndex);
+            rebuildTimelineItems(timelineList, canvas, window);
+
+            window->statusBar()->showMessage(
+                "Frame " + QString::number(frameIndex + 1) + " deleted"
+            );
+            });
+
+        return outerWidget;
+    }
+
+    QWidget* createAddFrameWidget()
+    {
+        QWidget* addWidget = new QWidget();
+        addWidget->setObjectName("TimelineAddFrameWidget");
+        addWidget->setFixedSize(TimelineCardWidth - 12, TimelineCardHeight - 12);
+
+        QVBoxLayout* layout = new QVBoxLayout(addWidget);
+        layout->setContentsMargins(10, 10, 10, 10);
+        layout->setSpacing(0);
+
+        QLabel* label = new QLabel("+ Add Frame");
+        label->setAlignment(Qt::AlignCenter);
+
+        layout->addStretch();
+        layout->addWidget(label);
+        layout->addStretch();
+
+        return addWidget;
+    }
+
+    void addFrameItem(
+        QListWidget* timelineList,
+        CanvasWidget* canvas,
+        MainWindow* window,
+        int frameIndex
+    )
+    {
+        QListWidgetItem* item = new QListWidgetItem();
+        item->setSizeHint(QSize(TimelineCardWidth, TimelineCardHeight));
+        item->setData(ItemTypeRole, "frame");
+        item->setData(FrameIndexRole, frameIndex);
+
+        timelineList->addItem(item);
+        timelineList->setItemWidget(
+            item,
+            createFrameWidget(timelineList, canvas, window, frameIndex)
+        );
+    }
+
+    void addAddFrameItem(QListWidget* timelineList)
+    {
+        QListWidgetItem* item = new QListWidgetItem();
+        item->setSizeHint(QSize(TimelineCardWidth, TimelineCardHeight));
+        item->setData(ItemTypeRole, "add");
+
+        timelineList->addItem(item);
+        timelineList->setItemWidget(item, createAddFrameWidget());
+    }
+
+    void rebuildTimelineItems(QListWidget* timelineList, CanvasWidget* canvas, MainWindow* window)
+    {
+        QSignalBlocker blocker(timelineList);
+
+        timelineList->clear();
+
+        for (int i = 0; i < canvas->getFrameCount(); ++i)
+        {
+            addFrameItem(timelineList, canvas, window, i);
+        }
+
+        addAddFrameItem(timelineList);
+
+        int selectedIndex = canvas->getSelectedFrameIndex();
+
+        if (selectedIndex >= 0 && selectedIndex < timelineList->count())
+        {
+            timelineList->setCurrentRow(selectedIndex);
+        }
+    }
+}
 
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
@@ -126,7 +309,9 @@ void MainWindow::buildTopToolbar()
 
     undoAction = topToolbar->addAction("Undo");
     redoAction = topToolbar->addAction("Redo");
+
     playAction = topToolbar->addAction("Play");
+    playAction->setCheckable(true);
 
     timelineAction = topToolbar->addAction("Timeline");
     timelineAction->setCheckable(true);
@@ -146,6 +331,7 @@ void MainWindow::buildTopToolbar()
     topToolbar->addWidget(new QLabel("FPS"));
 
     QSpinBox* fpsBox = new QSpinBox();
+    fpsBox->setObjectName("FpsSpinBox");
     fpsBox->setRange(1, 60);
     fpsBox->setValue(24);
     topToolbar->addWidget(fpsBox);
@@ -164,7 +350,7 @@ void MainWindow::buildToolDock()
     brushButton = new QPushButton("BRUSH");
     eraserButton = new QPushButton("ERASER");
     moveButton = new QPushButton("MOVE");
-    onionSkinButton = new QPushButton("ONION SKIN");
+    onionSkinButton = new QPushButton("ONION SKIN: OFF");
     colorButton = new QPushButton("COLOUR");
     clearButton = new QPushButton("CLEAR CANVAS");
     clearButton->setObjectName("DangerButton");
@@ -173,7 +359,9 @@ void MainWindow::buildToolDock()
     eraserButton->setCheckable(true);
     moveButton->setCheckable(true);
     onionSkinButton->setCheckable(true);
+
     brushButton->setChecked(true);
+    onionSkinButton->setChecked(false);
 
     QSpinBox* brushSizeBox = new QSpinBox();
     brushSizeBox->setRange(1, 50);
@@ -188,6 +376,10 @@ void MainWindow::buildToolDock()
 
     pressureLabel = new QLabel("Pressure: 1.00");
 
+    QSpinBox* onionSkinRangeBox = new QSpinBox();
+    onionSkinRangeBox->setRange(1, 2);
+    onionSkinRangeBox->setValue(1);
+
     toolLayout->addWidget(brushButton);
     toolLayout->addWidget(eraserButton);
     toolLayout->addWidget(moveButton);
@@ -201,6 +393,9 @@ void MainWindow::buildToolDock()
     toolLayout->addWidget(new QLabel("Pressure Strength"));
     toolLayout->addWidget(pressureSlider);
     toolLayout->addWidget(pressureLabel);
+    toolLayout->addSpacing(8);
+    toolLayout->addWidget(new QLabel("Onion Skin Frames"));
+    toolLayout->addWidget(onionSkinRangeBox);
     toolLayout->addSpacing(8);
     toolLayout->addWidget(clearButton);
     toolLayout->addStretch();
@@ -226,6 +421,13 @@ void MainWindow::buildToolDock()
         statusBar()->showMessage("Pressure strength: " + QString::number(value));
         });
 
+    connect(onionSkinRangeBox, &QSpinBox::valueChanged, this, [this](int value) {
+        canvas->setOnionSkinRange(value);
+        statusBar()->showMessage(
+            "Onion skin range: " + QString::number(value) + " frame(s) back and forward"
+        );
+        });
+
     QTimer* pressureTimer = new QTimer(this);
 
     connect(pressureTimer, &QTimer::timeout, this, [this]() {
@@ -241,6 +443,14 @@ void MainWindow::buildTimelineDock()
 {
     timelineDock = new QDockWidget("TIMELINE");
     timelineDock->setFeatures(QDockWidget::NoDockWidgetFeatures);
+    timelineDock->setMinimumHeight(190);
+
+    QWidget* timelineContainer = new QWidget();
+    timelineContainer->setObjectName("TimelineContainer");
+
+    QVBoxLayout* timelineLayout = new QVBoxLayout(timelineContainer);
+    timelineLayout->setContentsMargins(12, 18, 12, 14);
+    timelineLayout->setSpacing(0);
 
     timelineList = new QListWidget();
     timelineList->setObjectName("TimelineList");
@@ -249,28 +459,187 @@ void MainWindow::buildTimelineDock()
     timelineList->setWrapping(false);
     timelineList->setMovement(QListView::Static);
     timelineList->setResizeMode(QListView::Adjust);
-    timelineList->setGridSize(QSize(120, 70));
+
+    timelineList->setGridSize(QSize(TimelineCardWidth, TimelineCardHeight));
+    timelineList->setSpacing(14);
     timelineList->setUniformItemSizes(true);
+
     timelineList->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     timelineList->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 
-    timelineList->addItem("Frame 1");
-    timelineList->addItem("+ Add Frame");
-    timelineList->setCurrentRow(0);
+    timelineList->setMinimumHeight(TimelineCardHeight + 36);
+    timelineList->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 
-    timelineDock->setWidget(timelineList);
+    timelineList->setStyleSheet(R"(
+        QListWidget#TimelineList {
+            background-color: #171A21;
+            border: 1px solid #2A3140;
+            border-radius: 14px;
+            padding: 12px;
+            outline: none;
+        }
+
+        QListWidget#TimelineList::item {
+            background: transparent;
+            border: none;
+            padding: 0px;
+            margin: 0px;
+        }
+
+        QListWidget#TimelineList::item:hover {
+            background: transparent;
+            border: none;
+        }
+
+        QListWidget#TimelineList::item:selected {
+            background: transparent;
+            border: none;
+        }
+
+        QFrame#TimelineFrameCard {
+            background-color: #0F1117;
+            border: 1px solid #2A3140;
+            border-radius: 14px;
+        }
+
+        QFrame#TimelineAddFrameCard {
+            background-color: #0F1117;
+            border: 1px dashed #2A3140;
+            border-radius: 14px;
+        }
+
+        QPushButton#TimelineFrameSelectButton {
+            background: transparent;
+            color: #CBD5E1;
+            border: none;
+            padding: 0px;
+            text-align: center;
+            font-weight: 600;
+        }
+
+        QPushButton#TimelineFrameSelectButton:hover {
+            color: #00D1FF;
+        }
+
+        QPushButton#TimelineAddButton {
+            background: transparent;
+            color: #CBD5E1;
+            border: none;
+            padding: 0px;
+            text-align: center;
+            font-weight: 600;
+        }
+
+        QPushButton#TimelineAddButton:hover {
+            color: #00D1FF;
+        }
+
+        QPushButton#TimelineDeleteButton {
+            background-color: #171A21;
+            color: #FCA5A5;
+            border: 1px solid #4B2430;
+            border-radius: 12px;
+            padding: 0px;
+            margin: 0px;
+            text-align: center;
+            font-weight: 800;
+        }
+
+        QPushButton#TimelineDeleteButton:hover {
+            background-color: #2A1118;
+            color: #FB7185;
+            border: 1px solid #FB7185;
+        }
+    )");
+
+    timelineLayout->addWidget(timelineList);
+
+    timelineDock->setWidget(timelineContainer);
     addDockWidget(Qt::BottomDockWidgetArea, timelineDock);
     timelineDock->hide();
+
+    rebuildTimelineItems(timelineList, canvas, this);
 }
 
 void MainWindow::connectActions()
 {
-    canvas->setDrawingStartedCallback([this]() {
-        if (timelineDock->isVisible())
+    QTimer* playbackTimer = new QTimer(this);
+
+    QSpinBox* fpsBox = findChild<QSpinBox*>("FpsSpinBox");
+
+    if (fpsBox)
+    {
+        connect(fpsBox, QOverload<int>::of(&QSpinBox::valueChanged), this, [this, playbackTimer](int fps) {
+            if (playbackTimer->isActive())
+            {
+                playbackTimer->setInterval(playbackIntervalFromFps(fps));
+                statusBar()->showMessage(
+                    "Playback FPS changed to " + QString::number(fps)
+                );
+            }
+            });
+    }
+
+    connect(playbackTimer, &QTimer::timeout, this, [this, playbackTimer, fpsBox]() {
+        int frameCount = canvas->getFrameCount();
+
+        if (frameCount <= 1)
         {
-            timelineDock->hide();
-            timelineAction->setChecked(false);
-            statusBar()->showMessage("Timeline hidden while drawing");
+            playbackTimer->stop();
+
+            QSignalBlocker blocker(playAction);
+            playAction->setChecked(false);
+            playAction->setText("Play");
+
+            statusBar()->showMessage("Playback stopped: add more frames first");
+            return;
+        }
+
+        if (fpsBox)
+        {
+            playbackTimer->setInterval(playbackIntervalFromFps(fpsBox->value()));
+        }
+
+        int currentFrame = canvas->getSelectedFrameIndex();
+        int nextFrame = (currentFrame + 1) % frameCount;
+
+        canvas->selectFrame(nextFrame);
+        timelineList->setCurrentRow(nextFrame);
+
+        statusBar()->showMessage(
+            "Playing Frame " + QString::number(nextFrame + 1) +
+            " / " + QString::number(frameCount)
+        );
+        });
+
+    connect(playAction, &QAction::toggled, this, [this, playbackTimer, fpsBox](bool checked) {
+        if (checked)
+        {
+            if (canvas->getFrameCount() <= 1)
+            {
+                QSignalBlocker blocker(playAction);
+                playAction->setChecked(false);
+                playAction->setText("Play");
+
+                statusBar()->showMessage("Add at least 2 frames before playing");
+                return;
+            }
+
+            int fps = fpsBox ? fpsBox->value() : 24;
+
+            playAction->setText("Stop");
+            playbackTimer->start(playbackIntervalFromFps(fps));
+
+            statusBar()->showMessage(
+                "Playback started at " + QString::number(fps) + " FPS"
+            );
+        }
+        else
+        {
+            playbackTimer->stop();
+            playAction->setText("Play");
+
+            statusBar()->showMessage("Playback stopped");
         }
         });
 
@@ -335,10 +704,19 @@ void MainWindow::connectActions()
         statusBar()->showMessage("Move tool will be added later");
         });
 
-    connect(onionSkinButton, &QPushButton::clicked, this, [this]() {
-        setActiveTool(onionSkinButton);
-        canvas->setEraserMode(false);
-        statusBar()->showMessage("Onion skin will be added later");
+    connect(onionSkinButton, &QPushButton::toggled, this, [this](bool checked) {
+        canvas->setOnionSkinEnabled(checked);
+
+        if (checked)
+        {
+            onionSkinButton->setText("ONION SKIN: ON");
+            statusBar()->showMessage("Onion skin enabled: previous frames red, next frames green");
+        }
+        else
+        {
+            onionSkinButton->setText("ONION SKIN: OFF");
+            statusBar()->showMessage("Onion skin disabled");
+        }
         });
 
     connect(colorButton, &QPushButton::clicked, this, [this]() {
@@ -355,7 +733,7 @@ void MainWindow::connectActions()
 
     connect(clearButton, &QPushButton::clicked, this, [this]() {
         canvas->clearCanvas();
-        statusBar()->showMessage("Canvas cleared");
+        statusBar()->showMessage("Current frame cleared");
         });
 
     connect(undoAction, &QAction::triggered, this, [this]() {
@@ -374,15 +752,18 @@ void MainWindow::connectActions()
         canvas->redo();
         });
 
-    connect(newAction, &QAction::triggered, this, [this]() {
+    connect(newAction, &QAction::triggered, this, [this, playbackTimer]() {
+        playbackTimer->stop();
+
+        QSignalBlocker blocker(playAction);
+        playAction->setChecked(false);
+        playAction->setText("Play");
+
         canvas->clearProject();
         canvas->resetZoom();
         canvas->resetRotation();
 
-        timelineList->clear();
-        timelineList->addItem("Frame 1");
-        timelineList->addItem("+ Add Frame");
-        timelineList->setCurrentRow(0);
+        rebuildTimelineItems(timelineList, canvas, this);
 
         statusBar()->showMessage("New project started");
         });
@@ -391,34 +772,28 @@ void MainWindow::connectActions()
         close();
         });
 
-    connect(playAction, &QAction::triggered, this, [this]() {
-        statusBar()->showMessage("Playback will be added later");
-        });
-
     connect(timelineList, &QListWidget::itemClicked, this, [this](QListWidgetItem* item) {
-        if (item->text() == "+ Add Frame")
+        QString itemType = item->data(ItemTypeRole).toString();
+
+        if (itemType == "add")
         {
             canvas->addFrame();
+            rebuildTimelineItems(timelineList, canvas, this);
 
             int frameNumber = canvas->getSelectedFrameIndex() + 1;
 
-            QListWidgetItem* newFrame = new QListWidgetItem(
-                "Frame " + QString::number(frameNumber)
-            );
-
-            timelineList->insertItem(timelineList->count() - 1, newFrame);
-            timelineList->setCurrentItem(newFrame);
-
             statusBar()->showMessage("Frame " + QString::number(frameNumber) + " added");
+            return;
         }
-        else
+
+        if (itemType == "frame")
         {
-            int frameIndex = timelineList->row(item);
+            int frameIndex = item->data(FrameIndexRole).toInt();
 
             canvas->selectFrame(frameIndex);
-            timelineList->setCurrentItem(item);
+            timelineList->setCurrentRow(frameIndex);
 
-            statusBar()->showMessage(item->text() + " selected");
+            statusBar()->showMessage("Frame " + QString::number(frameIndex + 1) + " selected");
         }
         });
 }
@@ -428,7 +803,6 @@ void MainWindow::setActiveTool(QPushButton* activeButton)
     brushButton->setChecked(activeButton == brushButton);
     eraserButton->setChecked(activeButton == eraserButton);
     moveButton->setChecked(activeButton == moveButton);
-    onionSkinButton->setChecked(activeButton == onionSkinButton);
 }
 
 void MainWindow::updateZoomStatus()

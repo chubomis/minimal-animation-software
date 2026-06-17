@@ -44,6 +44,9 @@ public:
     void setPressureStrength(int value);
     void setDrawingStartedCallback(std::function<void()> callback);
 
+    void setOnionSkinEnabled(bool enabled);
+    void setOnionSkinRange(int range);
+
     qreal getLastPressure() const;
     qreal getZoomPercent() const;
     qreal getRotationDegrees() const;
@@ -57,6 +60,7 @@ public:
     void resetRotation();
 
     void addFrame();
+    void deleteFrame(int index);
     void selectFrame(int index);
     void clearProject();
 
@@ -135,6 +139,15 @@ private:
     void ensureCanvas();
     void rebuildCanvas();
 
+    void drawOnionSkinFrames(QPainter& painter);
+
+    void drawFullStrokeTinted(
+        QPainter& painter,
+        const Stroke& stroke,
+        const QColor& tintColor,
+        qreal opacity
+    );
+
     qreal applyPressureCurve(qreal pressure) const;
 
     qreal widthFromPressure(
@@ -166,6 +179,9 @@ private:
     bool pressureSensitivityEnabled = true;
     int pressureStrength = 70;
     qreal lastPressure = 1.0;
+
+    bool onionSkinEnabled = false;
+    int onionSkinRange = 1;
 
     bool drawing = false;
 

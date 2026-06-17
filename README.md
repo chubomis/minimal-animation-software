@@ -116,4 +116,4 @@ Clone the repository:
 
 ```bash
 git clone https://github.com/chubomis/minimal-animation-software.git
-cd YOUR_REPOSITORY_NAME
+cd minimal-animation-software

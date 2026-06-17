@@ -18,10 +18,95 @@
 #include <QSizeF>
 #include <QSize>
 #include <QSizePolicy>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 
 #include <algorithm>
 #include <cmath>
 #include <utility>
+
+namespace
+{
+    void setError(QString* errorMessage, const QString& message)
+    {
+        if (errorMessage)
+        {
+            *errorMessage = message;
+        }
+    }
+
+    QJsonObject inkPointToJson(const InkPoint& point)
+    {
+        QJsonObject object;
+        object["x"] = point.position.x();
+        object["y"] = point.position.y();
+        object["pressure"] = point.pressure;
+        return object;
+    }
+
+    QJsonObject strokeToJson(const Stroke& stroke)
+    {
+        QJsonObject object;
+        object["color"] = stroke.color.name(QColor::HexArgb);
+        object["size"] = stroke.size;
+        object["eraser"] = stroke.eraser;
+
+        QJsonArray pointsArray;
+
+        for (const InkPoint& point : stroke.points)
+        {
+            pointsArray.append(inkPointToJson(point));
+        }
+
+        object["points"] = pointsArray;
+        return object;
+    }
+
+    bool strokeFromJson(const QJsonObject& object, Stroke* stroke, QString* errorMessage)
+    {
+        if (!stroke)
+        {
+            setError(errorMessage, "Internal error while loading stroke.");
+            return false;
+        }
+
+        Stroke loadedStroke;
+
+        const QString colorText = object.value("color").toString("#FF111827");
+        loadedStroke.color = QColor(colorText);
+
+        if (!loadedStroke.color.isValid())
+        {
+            loadedStroke.color = QColor("#111827");
+        }
+
+        loadedStroke.size = std::clamp(object.value("size").toInt(6), 1, 500);
+        loadedStroke.eraser = object.value("eraser").toBool(false);
+
+        const QJsonArray pointsArray = object.value("points").toArray();
+
+        for (const QJsonValue& pointValue : pointsArray)
+        {
+            const QJsonObject pointObject = pointValue.toObject();
+
+            InkPoint point;
+            point.position = QPointF(
+                pointObject.value("x").toDouble(0.0),
+                pointObject.value("y").toDouble(0.0)
+            );
+            point.pressure = std::clamp(pointObject.value("pressure").toDouble(1.0), 0.01, 1.0);
+
+            loadedStroke.points.push_back(point);
+        }
+
+        *stroke = loadedStroke;
+        return true;
+    }
+}
 
 CanvasWidget::CanvasWidget(QWidget* parent)
     : QWidget(parent)
@@ -405,6 +490,216 @@ void CanvasWidget::clearCanvas()
 
     rebuildCanvas();
     update();
+}
+
+bool CanvasWidget::saveProjectToFile(const QString& filePath, int fps, QString* errorMessage) const
+{
+    if (filePath.trimmed().isEmpty())
+    {
+        setError(errorMessage, "No save file was selected.");
+        return false;
+    }
+
+    QJsonObject root;
+    root["format"] = "MinimalAnimationApp";
+    root["version"] = 1;
+    root["canvasWidth"] = canvasPixelSize.width();
+    root["canvasHeight"] = canvasPixelSize.height();
+    root["fps"] = std::clamp(fps, 1, 60);
+
+    QJsonArray framesArray;
+
+    for (const AnimationFrame& frame : frames)
+    {
+        QJsonObject frameObject;
+        QJsonArray strokesArray;
+
+        for (const Stroke& stroke : frame.strokes)
+        {
+            strokesArray.append(strokeToJson(stroke));
+        }
+
+        frameObject["strokes"] = strokesArray;
+        framesArray.append(frameObject);
+    }
+
+    root["frames"] = framesArray;
+
+    QFile file(filePath);
+
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
+    {
+        setError(errorMessage, "Could not open the save file for writing.");
+        return false;
+    }
+
+    const QJsonDocument document(root);
+    file.write(document.toJson(QJsonDocument::Indented));
+    file.close();
+
+    return true;
+}
+
+bool CanvasWidget::loadProjectFromFile(const QString& filePath, int* fpsOut, QString* errorMessage)
+{
+    if (filePath.trimmed().isEmpty())
+    {
+        setError(errorMessage, "No animation file was selected.");
+        return false;
+    }
+
+    QFile file(filePath);
+
+    if (!file.open(QIODevice::ReadOnly))
+    {
+        setError(errorMessage, "Could not open the animation file.");
+        return false;
+    }
+
+    const QByteArray data = file.readAll();
+    file.close();
+
+    QJsonParseError parseError;
+    const QJsonDocument document = QJsonDocument::fromJson(data, &parseError);
+
+    if (parseError.error != QJsonParseError::NoError || !document.isObject())
+    {
+        setError(errorMessage, "This animation file is not valid JSON.");
+        return false;
+    }
+
+    const QJsonObject root = document.object();
+
+    if (root.value("format").toString() != "MinimalAnimationApp")
+    {
+        setError(errorMessage, "This file is not a Minimal Animation project file.");
+        return false;
+    }
+
+    const int loadedCanvasWidth = std::clamp(root.value("canvasWidth").toInt(1280), 100, 8192);
+    const int loadedCanvasHeight = std::clamp(root.value("canvasHeight").toInt(720), 100, 8192);
+    const int loadedFps = std::clamp(root.value("fps").toInt(24), 1, 60);
+
+    const QJsonArray framesArray = root.value("frames").toArray();
+
+    if (framesArray.isEmpty())
+    {
+        setError(errorMessage, "The animation file has no frames.");
+        return false;
+    }
+
+    QVector<AnimationFrame> loadedFrames;
+    loadedFrames.reserve(framesArray.size());
+
+    for (const QJsonValue& frameValue : framesArray)
+    {
+        const QJsonObject frameObject = frameValue.toObject();
+        const QJsonArray strokesArray = frameObject.value("strokes").toArray();
+
+        AnimationFrame loadedFrame;
+        loadedFrame.strokes.reserve(strokesArray.size());
+
+        for (const QJsonValue& strokeValue : strokesArray)
+        {
+            Stroke loadedStroke;
+
+            if (!strokeFromJson(strokeValue.toObject(), &loadedStroke, errorMessage))
+            {
+                return false;
+            }
+
+            loadedFrame.strokes.push_back(loadedStroke);
+        }
+
+        loadedFrames.push_back(loadedFrame);
+    }
+
+    if (drawing)
+    {
+        finishStroke();
+    }
+
+    frames = loadedFrames;
+    selectedFrameIndex = 0;
+    copiedFrameAvailable = false;
+    copiedFrame = AnimationFrame{};
+
+    canvasPixelSize = QSize(loadedCanvasWidth, loadedCanvasHeight);
+    canvasImage = QImage();
+    currentStroke.points.clear();
+    drawing = false;
+
+    viewInitialized = false;
+
+    if (width() > 0 && height() > 0)
+    {
+        fitCanvasInWidget();
+        viewInitialized = true;
+    }
+
+    rebuildCanvas();
+    update();
+
+    if (fpsOut)
+    {
+        *fpsOut = loadedFps;
+    }
+
+    return true;
+}
+
+bool CanvasWidget::exportFramesToPngSequence(const QString& directoryPath, QString* errorMessage) const
+{
+    if (directoryPath.trimmed().isEmpty())
+    {
+        setError(errorMessage, "No export folder was selected.");
+        return false;
+    }
+
+    QDir directory(directoryPath);
+
+    if (!directory.exists() && !directory.mkpath("."))
+    {
+        setError(errorMessage, "Could not create the export folder.");
+        return false;
+    }
+
+    for (int i = 0; i < frames.size(); ++i)
+    {
+        const QString fileName = QString("frame_%1.png").arg(i + 1, 4, 10, QChar('0'));
+        const QString filePath = directory.filePath(fileName);
+
+        QImage frameImage = renderFrameToImage(i);
+
+        if (!frameImage.save(filePath, "PNG"))
+        {
+            setError(errorMessage, "Could not save " + fileName + ".");
+            return false;
+        }
+    }
+
+    return true;
+}
+
+QImage CanvasWidget::renderFrameToImage(int frameIndex) const
+{
+    QImage image(canvasPixelSize, QImage::Format_ARGB32_Premultiplied);
+    image.fill(QColor("#FAFAFA"));
+
+    if (frameIndex < 0 || frameIndex >= frames.size())
+    {
+        return image;
+    }
+
+    QPainter painter(&image);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+
+    for (const Stroke& stroke : frames[frameIndex].strokes)
+    {
+        drawFullStroke(painter, stroke);
+    }
+
+    return image;
 }
 
 bool CanvasWidget::event(QEvent* event)
@@ -1023,7 +1318,7 @@ void CanvasWidget::rebuildCanvas()
     }
 }
 
-void CanvasWidget::drawOnionSkinFrames(QPainter& painter)
+void CanvasWidget::drawOnionSkinFrames(QPainter& painter) const
 {
     if (frames.size() <= 1)
         return;
@@ -1069,7 +1364,7 @@ void CanvasWidget::drawFullStrokeTinted(
     const Stroke& stroke,
     const QColor& tintColor,
     qreal opacity
-)
+) const
 {
     if (stroke.eraser)
         return;
@@ -1198,7 +1493,7 @@ void CanvasWidget::drawLatestSegment(const Stroke& stroke)
     requestCanvasUpdate(dirty.toAlignedRect());
 }
 
-void CanvasWidget::drawFullStroke(QPainter& painter, const Stroke& stroke)
+void CanvasWidget::drawFullStroke(QPainter& painter, const Stroke& stroke) const
 {
     if (stroke.points.isEmpty())
         return;

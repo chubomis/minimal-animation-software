@@ -10,6 +10,7 @@
 #include <QPointF>
 #include <QRegion>
 #include <QSize>
+#include <QString>
 #include <QTransform>
 #include <QVector>
 #include <QWidget>
@@ -72,6 +73,11 @@ public:
     bool copyFrame(int index);
     bool pasteFrameToCurrent();
     bool hasCopiedFrame() const;
+
+    bool saveProjectToFile(const QString& filePath, int fps, QString* errorMessage = nullptr) const;
+    bool loadProjectFromFile(const QString& filePath, int* fpsOut = nullptr, QString* errorMessage = nullptr);
+    bool exportFramesToPngSequence(const QString& directoryPath, QString* errorMessage = nullptr) const;
+    QImage renderFrameToImage(int frameIndex) const;
 
     int getFrameCount() const;
     int getSelectedFrameIndex() const;
@@ -150,14 +156,14 @@ private:
     void ensureCanvas();
     void rebuildCanvas();
 
-    void drawOnionSkinFrames(QPainter& painter);
+    void drawOnionSkinFrames(QPainter& painter) const;
 
     void drawFullStrokeTinted(
         QPainter& painter,
         const Stroke& stroke,
         const QColor& tintColor,
         qreal opacity
-    );
+    ) const;
 
     qreal applyPressureCurve(qreal pressure) const;
 
@@ -175,7 +181,7 @@ private:
     );
 
     void drawLatestSegment(const Stroke& stroke);
-    void drawFullStroke(QPainter& painter, const Stroke& stroke);
+    void drawFullStroke(QPainter& painter, const Stroke& stroke) const;
 
 private:
     QVector<AnimationFrame> frames;

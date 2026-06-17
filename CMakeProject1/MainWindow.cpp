@@ -10,6 +10,9 @@
 #include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QDockWidget>
+#include <QDir>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QFont>
 #include <QFrame>
 #include <QHBoxLayout>
@@ -21,6 +24,8 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QPushButton>
+#include <QMessageBox>
+#include <QProcess>
 #include <QShortcut>
 #include <QSignalBlocker>
 #include <QSize>
@@ -29,8 +34,11 @@
 #include <QSpinBox>
 #include <QStatusBar>
 #include <QTimer>
+#include <QTemporaryDir>
 #include <QToolBar>
 #include <QVBoxLayout>
+#include <QFont>
+#include <QHBoxLayout>
 #include <QIcon>
 #include <QWidget>
 
@@ -50,6 +58,100 @@ namespace
     {
         fps = std::clamp(fps, 1, 60);
         return std::max(1, 1000 / fps);
+    }
+
+    QString withDefaultSuffix(QString filePath, const QString& suffix)
+    {
+        if (filePath.trimmed().isEmpty())
+            return filePath;
+
+        QFileInfo fileInfo(filePath);
+
+        if (fileInfo.suffix().isEmpty())
+        {
+            filePath += suffix;
+        }
+
+        return filePath;
+    }
+
+    bool exportVideoWithFfmpeg(
+        QWidget* parent,
+        CanvasWidget* canvas,
+        const QString& outputPath,
+        int fps,
+        QString* errorMessage
+    )
+    {
+        QTemporaryDir temporaryDirectory;
+
+        if (!temporaryDirectory.isValid())
+        {
+            if (errorMessage)
+                *errorMessage = "Could not create a temporary folder for video export.";
+            return false;
+        }
+
+        QString pngError;
+
+        if (!canvas->exportFramesToPngSequence(temporaryDirectory.path(), &pngError))
+        {
+            if (errorMessage)
+                *errorMessage = pngError;
+            return false;
+        }
+
+        const QString inputPattern = QDir(temporaryDirectory.path()).filePath("frame_%04d.png");
+        const QString suffix = QFileInfo(outputPath).suffix().toLower();
+
+        QStringList arguments;
+        arguments << "-y";
+        arguments << "-framerate" << QString::number(std::clamp(fps, 1, 60));
+        arguments << "-i" << inputPattern;
+
+        if (suffix == "gif")
+        {
+            arguments << "-vf" << "split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse";
+        }
+        else
+        {
+            arguments << "-pix_fmt" << "yuv420p";
+            arguments << "-vf" << "scale=trunc(iw/2)*2:trunc(ih/2)*2";
+        }
+
+        arguments << outputPath;
+
+        QProcess ffmpeg(parent);
+        ffmpeg.start("ffmpeg", arguments);
+
+        if (!ffmpeg.waitForStarted(3000))
+        {
+            if (errorMessage)
+            {
+                *errorMessage =
+                    "Could not start FFmpeg. Install FFmpeg and make sure ffmpeg.exe is in your PATH. "
+                    "PNG frame export will still work without FFmpeg.";
+            }
+
+            return false;
+        }
+
+        ffmpeg.waitForFinished(-1);
+
+        if (ffmpeg.exitStatus() != QProcess::NormalExit || ffmpeg.exitCode() != 0)
+        {
+            QString ffmpegOutput = QString::fromUtf8(ffmpeg.readAllStandardError()).trimmed();
+
+            if (ffmpegOutput.isEmpty())
+                ffmpegOutput = "FFmpeg failed, but did not return a detailed error.";
+
+            if (errorMessage)
+                *errorMessage = ffmpegOutput;
+
+            return false;
+        }
+
+        return true;
     }
 
     QSize askStartupCanvasSize(QWidget* parent)
@@ -379,6 +481,26 @@ void MainWindow::buildMenus()
     QMenu* fileMenu = menuBar()->addMenu("File");
 
     newAction = fileMenu->addAction("New");
+    newAction->setShortcut(QKeySequence("Ctrl+N"));
+    newAction->setShortcutContext(Qt::WindowShortcut);
+
+    saveAction = fileMenu->addAction("Save Animation");
+    saveAction->setShortcut(QKeySequence("Ctrl+S"));
+    saveAction->setShortcutContext(Qt::WindowShortcut);
+
+    importAction = fileMenu->addAction("Import Animation");
+    importAction->setShortcut(QKeySequence("Ctrl+O"));
+    importAction->setShortcutContext(Qt::WindowShortcut);
+
+    fileMenu->addSeparator();
+
+    exportPngSequenceAction = fileMenu->addAction("Export PNG Frames");
+    exportVideoAction = fileMenu->addAction("Export Video");
+    exportVideoAction->setShortcut(QKeySequence("Ctrl+E"));
+    exportVideoAction->setShortcutContext(Qt::WindowShortcut);
+
+    fileMenu->addSeparator();
+
     exitAction = fileMenu->addAction("Exit");
 
     QMenu* editMenu = menuBar()->addMenu("Edit");
@@ -401,6 +523,10 @@ void MainWindow::buildMenus()
     pasteFrameAction->setShortcut(QKeySequence("Ctrl+V"));
     pasteFrameAction->setShortcutContext(Qt::WindowShortcut);
 
+    addAction(newAction);
+    addAction(saveAction);
+    addAction(importAction);
+    addAction(exportVideoAction);
     addAction(undoMenuAction);
     addAction(redoMenuAction);
     addAction(copyFrameAction);
@@ -413,6 +539,12 @@ void MainWindow::buildTopToolbar()
 {
     QToolBar* topToolbar = addToolBar("Top Controls");
     topToolbar->setMovable(false);
+
+    topToolbar->addAction(saveAction);
+    topToolbar->addAction(importAction);
+    topToolbar->addAction(exportVideoAction);
+
+    topToolbar->addSeparator();
 
     undoAction = topToolbar->addAction("Undo");
     redoAction = topToolbar->addAction("Redo");
@@ -443,7 +575,7 @@ void MainWindow::buildTopToolbar()
     topToolbar->addSeparator();
     topToolbar->addWidget(new QLabel("FPS"));
 
-    QSpinBox* fpsBox = new QSpinBox();
+    fpsBox = new QSpinBox();
     fpsBox->setObjectName("FpsSpinBox");
     fpsBox->setRange(1, 60);
     fpsBox->setValue(24);
@@ -675,8 +807,6 @@ void MainWindow::connectActions()
 {
     QTimer* playbackTimer = new QTimer(this);
 
-    QSpinBox* fpsBox = findChild<QSpinBox*>("FpsSpinBox");
-
     if (fpsBox)
     {
         connect(fpsBox, QOverload<int>::of(&QSpinBox::valueChanged), this, [this, playbackTimer](int fps) {
@@ -690,7 +820,7 @@ void MainWindow::connectActions()
             });
     }
 
-    connect(playbackTimer, &QTimer::timeout, this, [this, playbackTimer, fpsBox]() {
+    connect(playbackTimer, &QTimer::timeout, this, [this, playbackTimer]() {
         int frameCount = canvas->getFrameCount();
 
         if (frameCount <= 1)
@@ -722,7 +852,7 @@ void MainWindow::connectActions()
         );
         });
 
-    connect(playAction, &QAction::toggled, this, [this, playbackTimer, fpsBox](bool checked) {
+    connect(playAction, &QAction::toggled, this, [this, playbackTimer](bool checked) {
         if (checked)
         {
             if (canvas->getFrameCount() <= 1)
@@ -898,13 +1028,135 @@ void MainWindow::connectActions()
         playAction->setChecked(false);
         playAction->setText("Play");
 
+        const QSize newCanvasSize = askStartupCanvasSize(this);
+
         canvas->clearProject();
+        canvas->setCanvasSize(newCanvasSize);
         canvas->resetZoom();
         canvas->resetRotation();
+        canvas->centerCanvas();
 
         rebuildTimelineItems(timelineList, canvas, this);
 
-        statusBar()->showMessage("New project started");
+        statusBar()->showMessage(
+            "New project started - Canvas " +
+            QString::number(newCanvasSize.width()) + " x " +
+            QString::number(newCanvasSize.height())
+        );
+        });
+
+    connect(saveAction, &QAction::triggered, this, [this]() {
+        QString filePath = QFileDialog::getSaveFileName(
+            this,
+            "Save Animation",
+            "untitled.minanim",
+            "Minimal Animation Project (*.minanim);;JSON Project (*.json)"
+        );
+
+        if (filePath.isEmpty())
+            return;
+
+        filePath = withDefaultSuffix(filePath, ".minanim");
+
+        QString errorMessage;
+        const int fps = fpsBox ? fpsBox->value() : 24;
+
+        if (!canvas->saveProjectToFile(filePath, fps, &errorMessage))
+        {
+            QMessageBox::warning(this, "Save Failed", errorMessage);
+            return;
+        }
+
+        statusBar()->showMessage("Animation saved: " + QFileInfo(filePath).fileName());
+        });
+
+    connect(importAction, &QAction::triggered, this, [this, playbackTimer]() {
+        playbackTimer->stop();
+
+        QSignalBlocker blocker(playAction);
+        playAction->setChecked(false);
+        playAction->setText("Play");
+
+        QString filePath = QFileDialog::getOpenFileName(
+            this,
+            "Import Animation",
+            QString(),
+            "Minimal Animation Project (*.minanim *.json);;All Files (*.*)"
+        );
+
+        if (filePath.isEmpty())
+            return;
+
+        QString errorMessage;
+        int importedFps = 24;
+
+        if (!canvas->loadProjectFromFile(filePath, &importedFps, &errorMessage))
+        {
+            QMessageBox::warning(this, "Import Failed", errorMessage);
+            return;
+        }
+
+        if (fpsBox)
+        {
+            fpsBox->setValue(importedFps);
+        }
+
+        rebuildTimelineItems(timelineList, canvas, this);
+        timelineList->setCurrentRow(canvas->getSelectedFrameIndex());
+
+        statusBar()->showMessage("Animation imported: " + QFileInfo(filePath).fileName());
+        });
+
+    connect(exportPngSequenceAction, &QAction::triggered, this, [this]() {
+        QString directoryPath = QFileDialog::getExistingDirectory(
+            this,
+            "Choose Folder for PNG Frames"
+        );
+
+        if (directoryPath.isEmpty())
+            return;
+
+        QString errorMessage;
+
+        if (!canvas->exportFramesToPngSequence(directoryPath, &errorMessage))
+        {
+            QMessageBox::warning(this, "PNG Export Failed", errorMessage);
+            return;
+        }
+
+        statusBar()->showMessage(
+            "Exported " + QString::number(canvas->getFrameCount()) + " PNG frame(s)"
+        );
+        });
+
+    connect(exportVideoAction, &QAction::triggered, this, [this]() {
+        QString filePath = QFileDialog::getSaveFileName(
+            this,
+            "Export Video",
+            "animation.mp4",
+            "MP4 Video (*.mp4);;GIF Animation (*.gif)"
+        );
+
+        if (filePath.isEmpty())
+            return;
+
+        QFileInfo selectedFileInfo(filePath);
+
+        if (selectedFileInfo.suffix().isEmpty())
+        {
+            filePath += ".mp4";
+        }
+
+        QString errorMessage;
+        const int fps = fpsBox ? fpsBox->value() : 24;
+
+        if (!exportVideoWithFfmpeg(this, canvas, filePath, fps, &errorMessage))
+        {
+            QMessageBox::warning(this, "Video Export Failed", errorMessage);
+            return;
+        }
+
+        statusBar()->showMessage("Video exported: " + QFileInfo(filePath).fileName());
         });
 
     connect(exitAction, &QAction::triggered, this, [this]() {

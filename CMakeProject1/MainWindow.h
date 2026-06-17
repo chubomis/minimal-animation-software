@@ -9,6 +9,7 @@ class QDockWidget;
 class QListWidget;
 class QLabel;
 class QPushButton;
+class QSpinBox;
 
 class MainWindow : public QMainWindow
 {
@@ -31,6 +32,10 @@ private:
     CanvasWidget* canvas = nullptr;
 
     QAction* newAction = nullptr;
+    QAction* saveAction = nullptr;
+    QAction* importAction = nullptr;
+    QAction* exportPngSequenceAction = nullptr;
+    QAction* exportVideoAction = nullptr;
     QAction* exitAction = nullptr;
 
     QAction* undoMenuAction = nullptr;
@@ -49,6 +54,8 @@ private:
     QAction* rotate90Action = nullptr;
     QAction* rotate180Action = nullptr;
     QAction* resetRotationAction = nullptr;
+
+    QSpinBox* fpsBox = nullptr;
 
     QDockWidget* timelineDock = nullptr;
     QListWidget* timelineList = nullptr;

@@ -375,9 +375,15 @@ void MainWindow::connectActions()
         });
 
     connect(newAction, &QAction::triggered, this, [this]() {
-        canvas->clearCanvas();
+        canvas->clearProject();
         canvas->resetZoom();
         canvas->resetRotation();
+
+        timelineList->clear();
+        timelineList->addItem("Frame 1");
+        timelineList->addItem("+ Add Frame");
+        timelineList->setCurrentRow(0);
+
         statusBar()->showMessage("New project started");
         });
 
@@ -392,7 +398,9 @@ void MainWindow::connectActions()
     connect(timelineList, &QListWidget::itemClicked, this, [this](QListWidgetItem* item) {
         if (item->text() == "+ Add Frame")
         {
-            int frameNumber = timelineList->count();
+            canvas->addFrame();
+
+            int frameNumber = canvas->getSelectedFrameIndex() + 1;
 
             QListWidgetItem* newFrame = new QListWidgetItem(
                 "Frame " + QString::number(frameNumber)
@@ -401,11 +409,15 @@ void MainWindow::connectActions()
             timelineList->insertItem(timelineList->count() - 1, newFrame);
             timelineList->setCurrentItem(newFrame);
 
-            statusBar()->showMessage("Frame added");
+            statusBar()->showMessage("Frame " + QString::number(frameNumber) + " added");
         }
         else
         {
+            int frameIndex = timelineList->row(item);
+
+            canvas->selectFrame(frameIndex);
             timelineList->setCurrentItem(item);
+
             statusBar()->showMessage(item->text() + " selected");
         }
         });

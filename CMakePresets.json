@@ -2,14 +2,20 @@
   "version": 3,
   "configurePresets": [
     {
-      "name": "windows-base",
-      "hidden": true,
+      "name": "mingw-debug",
+      "displayName": "MinGW Debug",
+      "description": "Build using Qt 6.11.1 MinGW 64-bit",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/out/build/${presetName}",
       "installDir": "${sourceDir}/out/install/${presetName}",
       "cacheVariables": {
-        "CMAKE_C_COMPILER": "cl.exe",
-        "CMAKE_CXX_COMPILER": "cl.exe"
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_C_COMPILER": "C:/Qt/Tools/mingw1310_64/bin/gcc.exe",
+        "CMAKE_CXX_COMPILER": "C:/Qt/Tools/mingw1310_64/bin/g++.exe",
+        "CMAKE_PREFIX_PATH": "C:/Qt/6.11.1/mingw_64"
+      },
+      "environment": {
+        "PATH": "C:/Qt/6.11.1/mingw_64/bin;C:/Qt/Tools/mingw1310_64/bin;$penv{PATH}"
       },
       "condition": {
         "type": "equals",
@@ -18,45 +24,26 @@
       }
     },
     {
-      "name": "x64-debug",
-      "displayName": "x64 Debug",
-      "inherits": "windows-base",
-      "architecture": {
-        "value": "x64",
-        "strategy": "external"
-      },
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "CMAKE_PREFIX_PATH": "C:/Qt/6.11.1/msvc2022_64"
-      }
-    },
-    {
-      "name": "x64-release",
-      "displayName": "x64 Release",
-      "inherits": "x64-debug",
+      "name": "mingw-release",
+      "displayName": "MinGW Release",
+      "description": "Release build using Qt 6.11.1 MinGW 64-bit",
+      "inherits": "mingw-debug",
+      "binaryDir": "${sourceDir}/out/build/${presetName}",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release"
       }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "mingw-debug-build",
+      "displayName": "Build MinGW Debug",
+      "configurePreset": "mingw-debug"
     },
     {
-      "name": "x86-debug",
-      "displayName": "x86 Debug",
-      "inherits": "windows-base",
-      "architecture": {
-        "value": "x86",
-        "strategy": "external"
-      },
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug"
-      }
-    },
-    {
-      "name": "x86-release",
-      "displayName": "x86 Release",
-      "inherits": "x86-debug",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release"
-      }
+      "name": "mingw-release-build",
+      "displayName": "Build MinGW Release",
+      "configurePreset": "mingw-release"
     }
   ]
 }

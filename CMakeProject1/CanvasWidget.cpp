@@ -17,6 +17,7 @@
 #include <QRectF>
 #include <QSizeF>
 #include <QSizePolicy>
+
 #include <algorithm>
 #include <cmath>
 #include <utility>
@@ -34,6 +35,9 @@ CanvasWidget::CanvasWidget(QWidget* parent)
     setMouseTracking(true);
     setFocusPolicy(Qt::StrongFocus);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+
+    frames.push_back(AnimationFrame{});
+    selectedFrameIndex = 0;
 
     inputClock.start();
     repaintClock.start();
@@ -120,11 +124,94 @@ void CanvasWidget::resetRotation()
     rotateAt(rect().center(), -viewRotationDegrees);
 }
 
+AnimationFrame& CanvasWidget::currentFrame()
+{
+    if (frames.isEmpty())
+    {
+        frames.push_back(AnimationFrame{});
+        selectedFrameIndex = 0;
+    }
+
+    if (selectedFrameIndex < 0 || selectedFrameIndex >= frames.size())
+    {
+        selectedFrameIndex = 0;
+    }
+
+    return frames[selectedFrameIndex];
+}
+
+const AnimationFrame& CanvasWidget::currentFrame() const
+{
+    return frames[selectedFrameIndex];
+}
+
+void CanvasWidget::addFrame()
+{
+    if (drawing)
+    {
+        finishStroke();
+    }
+
+    frames.push_back(AnimationFrame{});
+    selectedFrameIndex = static_cast<int>(frames.size()) - 1;
+
+    currentStroke.points.clear();
+    drawing = false;
+
+    rebuildCanvas();
+    update();
+}
+
+void CanvasWidget::selectFrame(int index)
+{
+    if (index < 0 || index >= frames.size())
+        return;
+
+    if (drawing)
+    {
+        finishStroke();
+    }
+
+    selectedFrameIndex = index;
+
+    currentStroke.points.clear();
+    drawing = false;
+
+    rebuildCanvas();
+    update();
+}
+
+void CanvasWidget::clearProject()
+{
+    frames.clear();
+    frames.push_back(AnimationFrame{});
+
+    selectedFrameIndex = 0;
+
+    currentStroke.points.clear();
+    drawing = false;
+
+    rebuildCanvas();
+    update();
+}
+
+int CanvasWidget::getFrameCount() const
+{
+    return static_cast<int>(frames.size());
+}
+
+int CanvasWidget::getSelectedFrameIndex() const
+{
+    return selectedFrameIndex;
+}
+
 void CanvasWidget::undo()
 {
-    if (!strokes.isEmpty())
+    AnimationFrame& frame = currentFrame();
+
+    if (!frame.strokes.isEmpty())
     {
-        redoStack.push_back(strokes.takeLast());
+        frame.redoStack.push_back(frame.strokes.takeLast());
         rebuildCanvas();
         update();
     }
@@ -132,9 +219,11 @@ void CanvasWidget::undo()
 
 void CanvasWidget::redo()
 {
-    if (!redoStack.isEmpty())
+    AnimationFrame& frame = currentFrame();
+
+    if (!frame.redoStack.isEmpty())
     {
-        strokes.push_back(redoStack.takeLast());
+        frame.strokes.push_back(frame.redoStack.takeLast());
         rebuildCanvas();
         update();
     }
@@ -142,10 +231,14 @@ void CanvasWidget::redo()
 
 void CanvasWidget::clearCanvas()
 {
-    strokes.clear();
-    redoStack.clear();
+    AnimationFrame& frame = currentFrame();
+
+    frame.strokes.clear();
+    frame.redoStack.clear();
+
     currentStroke.points.clear();
     drawing = false;
+
     rebuildCanvas();
     update();
 }
@@ -663,7 +756,7 @@ void CanvasWidget::beginStroke(
     currentStroke.points.push_back({ position, pressure });
 
     drawing = true;
-    redoStack.clear();
+    currentFrame().redoStack.clear();
 
     drawDot(currentStroke, position, pressure);
 }
@@ -702,7 +795,7 @@ void CanvasWidget::finishStroke()
 
     if (currentStroke.points.size() > 1)
     {
-        strokes.push_back(currentStroke);
+        currentFrame().strokes.push_back(currentStroke);
     }
 
     currentStroke.points.clear();
@@ -728,7 +821,7 @@ void CanvasWidget::rebuildCanvas()
     QPainter painter(&canvasImage);
     painter.setRenderHint(QPainter::Antialiasing, true);
 
-    for (const Stroke& stroke : strokes)
+    for (const Stroke& stroke : currentFrame().strokes)
     {
         drawFullStroke(painter, stroke);
     }

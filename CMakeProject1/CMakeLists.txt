@@ -1,4 +1,19 @@
-﻿find_package(Qt6 REQUIRED COMPONENTS Widgets)
+﻿cmake_minimum_required(VERSION 3.21)
+
+project(CMakeProject1 LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+set(CMAKE_AUTOMOC ON)
+set(CMAKE_AUTORCC ON)
+set(CMAKE_AUTOUIC ON)
+
+# Tell CMake where Qt 6 is installed
+set(CMAKE_PREFIX_PATH "C:/Qt/6.11.1/msvc2022_64")
+
+find_package(Qt6 REQUIRED COMPONENTS Widgets)
 
 qt_standard_project_setup()
 

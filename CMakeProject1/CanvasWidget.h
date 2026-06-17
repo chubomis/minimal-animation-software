@@ -1,32 +1,39 @@
 #pragma once
 
-#include <QWidget>
-#include <QImage>
+#include "Stroke.h"
+
 #include <QColor>
-#include <QPointF>
 #include <QElapsedTimer>
+#include <QEventPoint>
+#include <QImage>
+#include <QList>
+#include <QPointF>
 #include <QRegion>
 #include <QTransform>
 #include <QVector>
+#include <QWidget>
 
 #include <functional>
 
-#include "Stroke.h"
-#include <QEventPoint>
-#include <QList>
-class QEvent;
-class QResizeEvent;
-class QPaintEvent;
-class QWheelEvent;
+class QGestureEvent;
 class QMouseEvent;
+class QPainter;
+class QPinchGesture;
+class QResizeEvent;
 class QTabletEvent;
 class QTouchEvent;
-class QGestureEvent;
-class QPinchGesture;
-class QPainter;
+class QWheelEvent;
+
+struct AnimationFrame
+{
+    QVector<Stroke> strokes;
+    QVector<Stroke> redoStack;
+};
 
 class CanvasWidget : public QWidget
 {
+    Q_OBJECT
+
 public:
     explicit CanvasWidget(QWidget* parent = nullptr);
 
@@ -49,6 +56,13 @@ public:
     void rotate180();
     void resetRotation();
 
+    void addFrame();
+    void selectFrame(int index);
+    void clearProject();
+
+    int getFrameCount() const;
+    int getSelectedFrameIndex() const;
+
     void undo();
     void redo();
     void clearCanvas();
@@ -64,6 +78,9 @@ protected:
     void tabletEvent(QTabletEvent* event) override;
 
 private:
+    AnimationFrame& currentFrame();
+    const AnimationFrame& currentFrame() const;
+
     QPointF canvasCenter() const;
     QRectF canvasRect() const;
 
@@ -88,16 +105,16 @@ private:
 
     qreal normalizeAngle(qreal angle) const;
     qreal touchAngleDegrees(const QList<QEventPoint>& points) const;
-
     QPointF averageTouchPosition(const QList<QEventPoint>& points) const;
+
     qreal averageTouchDistance(
         const QList<QEventPoint>& points,
         const QPointF& center
     ) const;
 
     void cancelCurrentStroke();
-    bool handleTouchEvent(QTouchEvent* event);
 
+    bool handleTouchEvent(QTouchEvent* event);
     bool gestureEvent(QGestureEvent* event);
     void handlePinchGesture(QPinchGesture* gesture);
 
@@ -106,7 +123,12 @@ private:
 
     void requestCanvasUpdate(const QRect& canvasDirtyRect);
 
-    void beginStroke(const QPointF& position, qreal pressure, bool shouldErase);
+    void beginStroke(
+        const QPointF& position,
+        qreal pressure,
+        bool shouldErase
+    );
+
     void addPoint(const QPointF& rawPosition, qreal pressure);
     void finishStroke();
 
@@ -114,45 +136,56 @@ private:
     void rebuildCanvas();
 
     qreal applyPressureCurve(qreal pressure) const;
-    qreal widthFromPressure(const Stroke& stroke, qreal pressure) const;
+
+    qreal widthFromPressure(
+        const Stroke& stroke,
+        qreal pressure
+    ) const;
+
     QPen makePen(const Stroke& stroke, qreal pressure) const;
 
-    void drawDot(const Stroke& stroke, const QPointF& position, qreal pressure);
+    void drawDot(
+        const Stroke& stroke,
+        const QPointF& position,
+        qreal pressure
+    );
+
     void drawLatestSegment(const Stroke& stroke);
     void drawFullStroke(QPainter& painter, const Stroke& stroke);
 
 private:
-    QImage canvasImage;
+    QVector<AnimationFrame> frames;
+    int selectedFrameIndex = 0;
 
-    QVector<Stroke> strokes;
-    QVector<Stroke> redoStack;
+    QImage canvasImage;
     Stroke currentStroke;
 
-    QColor brushColor = Qt::black;
+    QColor brushColor = QColor("#111827");
     int brushSize = 6;
-    bool drawing = false;
     bool eraserMode = false;
-
     bool pressureSensitivityEnabled = true;
     int pressureStrength = 70;
     qreal lastPressure = 1.0;
 
+    bool drawing = false;
+
     qreal viewScale = 1.0;
     qreal viewRotationDegrees = 0.0;
-    QPointF viewOffset = QPointF(0, 0);
+    QPointF viewOffset = QPointF(0.0, 0.0);
+
+    QElapsedTimer inputClock;
+    QElapsedTimer repaintClock;
+
+    qint64 lastTabletEventMs = -10000;
+    qint64 lastMultiTouchEventMs = -10000;
 
     bool multiTouchActive = false;
     bool touchPanning = false;
-    qint64 lastMultiTouchEventMs = -100000;
-    QPointF lastTouchCenter = QPointF(0, 0);
+    QPointF lastTouchCenter = QPointF(0.0, 0.0);
     qreal lastTouchDistance = 0.0;
     qreal lastTouchAngle = 0.0;
 
-    QElapsedTimer inputClock;
-    qint64 lastTabletEventMs = -100000;
-
     QRegion pendingUpdateRegion;
-    QElapsedTimer repaintClock;
     bool repaintScheduled = false;
 
     std::function<void()> drawingStartedCallback;
